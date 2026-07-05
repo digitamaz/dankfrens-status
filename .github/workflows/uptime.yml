@@ -1,0 +1,69 @@
+name: uptime
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Send a test Telegram alert"
+        required: false
+        default: "false"
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe endpoints
+        id: probe
+        run: |
+          set -u
+          FAILS=""
+          check () {
+            local name="$1" url="$2" want="$3"
+            local code body
+            body=$(curl -sS -m 20 -w "\n%{http_code}" "$url" 2>/dev/null) || { FAILS="$FAILS\n$name: curl error"; return; }
+            code=$(echo "$body" | tail -1)
+            if [ "$code" != "200" ]; then
+              FAILS="$FAILS\n$name: HTTP $code"
+              return
+            fi
+            if [ -n "$want" ] && ! echo "$body" | head -n -1 | grep -q "$want"; then
+              FAILS="$FAILS\n$name: 200 but body missing '$want'"
+            fi
+          }
+          check "api-health" "https://dank-frens-api.onrender.com/api/health" '"ok":true'
+          check "market-feed" "https://dank-frens-api.onrender.com/api/dank-frens/market-feed" ""
+          check "frontend" "https://dankfrens.com" ""
+          if [ "${{ github.event.inputs.test_alert }}" = "true" ]; then
+            FAILS="$FAILS\n(test alert requested manually)"
+          fi
+          if [ -n "$FAILS" ]; then
+            echo "fails<<EOF" >> "$GITHUB_OUTPUT"
+            printf "%b\n" "$FAILS" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+            echo "status=down" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=up" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Telegram alert on failure
+        if: steps.probe.outputs.status == 'down'
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TG_CHAT_ID }}
+          FAILS: ${{ steps.probe.outputs.fails }}
+        run: |
+          TEXT="[Dank Frens 감시] 문제 감지됨:${FAILS}
+확인: https://dashboard.render.com / https://vercel.com
+시각(UTC): $(date -u '+%Y-%m-%d %H:%M')"
+          curl -sS -m 20 -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${CHAT}" \
+            --data-urlencode "text=${TEXT}" > /dev/null
+
+      - name: Fail job when down
+        if: steps.probe.outputs.status == 'down'
+        run: exit 1
