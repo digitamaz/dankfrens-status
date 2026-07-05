@@ -36,8 +36,22 @@ jobs:
             fi
           }
           check "api-health" "https://dank-frens-api.onrender.com/api/health" '"ok":true'
-          check "market-feed" "https://dank-frens-api.onrender.com/api/dank-frens/market-feed" ""
+          # The genesis collection pubkey only exists in the mainnet DB, so this
+          # doubles as a mainnet-regression guard: if the backend ever boots
+          # against the old devnet DB, this marker disappears and we alert.
+          check "market-feed-mainnet" "https://dank-frens-api.onrender.com/api/dank-frens/market-feed" "7GJq37Y5yRXU2g7deArKAfdq2Pcs7bwauWfjdFKD7aF6"
           check "frontend" "https://dankfrens.com" ""
+          # On-chain probe: mainnet program must exist and be executable.
+          # Public RPC can throttle shared runners, so transport errors are
+          # skipped; we only alert when RPC answers and the program is wrong.
+          rpc=$(curl -sS -m 20 -X POST -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"getAccountInfo","params":["HTVDGm5rVydzGDyoTfZU2C8u3GL6Px6idsXvnMzyNtrJ",{"encoding":"base64","dataSlice":{"offset":0,"length":0}}]}' \
+            "https://api.mainnet-beta.solana.com" 2>/dev/null) || rpc=""
+          if [ -n "$rpc" ] && echo "$rpc" | grep -q '"result"'; then
+            if ! echo "$rpc" | grep -q '"executable":true'; then
+              FAILS="$FAILS\nonchain-program: mainnet program missing or not executable"
+            fi
+          fi
           if [ "${{ github.event.inputs.test_alert }}" = "true" ]; then
             FAILS="$FAILS\n(test alert requested manually)"
           fi
