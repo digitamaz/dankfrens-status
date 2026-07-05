@@ -57,9 +57,7 @@ jobs:
           CHAT: ${{ secrets.TG_CHAT_ID }}
           FAILS: ${{ steps.probe.outputs.fails }}
         run: |
-          TEXT="[Dank Frens 감시] 문제 감지됨:${FAILS}
-확인: https://dashboard.render.com / https://vercel.com
-시각(UTC): $(date -u '+%Y-%m-%d %H:%M')"
+          TEXT=$(printf '[Dank Frens 감시] 문제 감지됨:%b\n확인: dashboard.render.com / vercel.com\n시각(UTC): %s' "$FAILS" "$(date -u '+%Y-%m-%d %H:%M')")
           curl -sS -m 20 -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT}" \
             --data-urlencode "text=${TEXT}" > /dev/null
